@@ -1,0 +1,17 @@
+# Python dependencies for Solana vault client
+
+# Core Solana libraries
+solana>=0.30.0
+anchorpy>=0.18.0
+
+# Additional dependencies
+base58>=2.1.0
+construct>=2.10.0
+borsh-construct>=0.1.0
+
+# For Django integration (optional)
+# django>=4.0
+# asgiref>=3.5.0
+
+# Async support
+aiohttp>=3.8.0
