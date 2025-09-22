@@ -1,284 +1,133 @@
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::system_instruction;
 
-declare_id!("5rLtuZQcfq1Cjs2R9aAmGoURLwm7S6NDQbUVA94jDKFL");
+pub mod constants;
+pub mod errors;
+pub mod instructions;
+pub mod state;
+
+use instructions::*;
+
+declare_id!("1h1HCv8m2F3vL2hPCFz1dX4Srx1Lj7UQzsYShXVpXsk");
 
 #[program]
 pub mod vault_app {
     use super::*;
 
     pub fn initialize_vault(ctx: Context<InitializeVault>, authority: Pubkey) -> Result<()> {
-        let vault = &mut ctx.accounts.vault;
-        vault.authority = authority;
-        vault.total_deposits = 0;
-        vault.bump = ctx.bumps.vault;
-        msg!("Vault initialized with authority: {}", authority);
-        Ok(())
+        instructions::initialize_vault::handler(ctx, authority)
     }
 
     pub fn initialize_user_vault(ctx: Context<InitializeUserVault>) -> Result<()> {
-        let user_vault = &mut ctx.accounts.user_vault;
-        user_vault.owner = ctx.accounts.owner.key();
-        user_vault.total_deposited = 0;
-        user_vault.total_withdrawn = 0;
-        user_vault.current_balance = 0;
-        user_vault.last_transaction = 0;
-        user_vault.bump = ctx.bumps.user_vault;
-        
-        msg!("User vault initialized for {}", ctx.accounts.owner.key());
-        Ok(())
+        instructions::initialize_user_vault::handler(ctx)
     }
 
     pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
-        let from = &ctx.accounts.depositor;
-        let to = &ctx.accounts.vault_pda;
-        
-        let ix = system_instruction::transfer(
-            from.key,
-            to.key,
-            amount,
-        );
-        
-        anchor_lang::solana_program::program::invoke(
-            &ix,
-            &[from.to_account_info(), to.to_account_info()],
-        )?;
-        
-        let vault = &mut ctx.accounts.vault;
-        vault.total_deposits = vault.total_deposits.checked_add(amount)
-            .ok_or(ErrorCode::MathOverflow)?;
-        
-        let user_vault = &mut ctx.accounts.user_vault;
-        if user_vault.owner == Pubkey::default() {
-            user_vault.owner = from.key();
-            user_vault.bump = ctx.bumps.user_vault;
-        }
-        user_vault.total_deposited = user_vault.total_deposited.checked_add(amount)
-            .ok_or(ErrorCode::MathOverflow)?;
-        user_vault.current_balance = user_vault.current_balance.checked_add(amount)
-            .ok_or(ErrorCode::MathOverflow)?;
-        
-        let clock = Clock::get()?;
-        user_vault.last_transaction = clock.unix_timestamp;
-        
-        msg!("User {} deposited {} lamports to vault", from.key(), amount);
-        Ok(())
+        instructions::deposit::handler(ctx, amount)
     }
 
     pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
-        let vault = &mut ctx.accounts.vault;
-        let vault_pda = &ctx.accounts.vault_pda;
-        let to = &ctx.accounts.recipient;
-        let user_vault = &mut ctx.accounts.user_vault;
-        
-        require!(
-            user_vault.current_balance >= amount,
-            ErrorCode::InsufficientUserBalance
-        );
-        
-        require!(
-            vault_pda.get_lamports() >= amount,
-            ErrorCode::InsufficientFunds
-        );
-        
-        let vault_pda_seeds = &[
-            b"vault_pda".as_ref(),
-            &[ctx.bumps.vault_pda]
-        ];
-        
-        let signer_seeds = &[&vault_pda_seeds[..]];
-        
-        let cpi_context = anchor_lang::context::CpiContext::new_with_signer(
-            ctx.accounts.system_program.to_account_info(),
-            anchor_lang::system_program::Transfer {
-                from: vault_pda.to_account_info(),
-                to: to.to_account_info(),
-            },
-            signer_seeds,
-        );
-        
-        anchor_lang::system_program::transfer(cpi_context, amount)?;
-        
-        user_vault.current_balance = user_vault.current_balance.checked_sub(amount)
-            .ok_or(ErrorCode::MathOverflow)?;
-        user_vault.total_withdrawn = user_vault.total_withdrawn.checked_add(amount)
-            .ok_or(ErrorCode::MathOverflow)?;
-        
-        vault.total_deposits = vault.total_deposits.checked_sub(amount)
-            .ok_or(ErrorCode::MathOverflow)?;
-        
-        let clock = Clock::get()?;
-        user_vault.last_transaction = clock.unix_timestamp;
-        
-        msg!("User {} withdrew {} lamports from vault", ctx.accounts.owner.key(), amount);
-        Ok(())
+        instructions::withdraw::handler(ctx, amount)
     }
 
     pub fn get_user_balance(ctx: Context<GetUserBalance>) -> Result<u64> {
-        Ok(ctx.accounts.user_vault.current_balance)
+        instructions::get_user_balance::handler(ctx)
     }
 
     pub fn get_vault_stats(ctx: Context<GetVaultStats>) -> Result<(u64, u64)> {
-        let vault = &ctx.accounts.vault;
-        let vault_pda = &ctx.accounts.vault_pda;
-        Ok((vault.total_deposits, vault_pda.get_lamports()))
+        instructions::get_vault_stats::handler(ctx)
     }
-}
 
-#[derive(Accounts)]
-pub struct InitializeVault<'info> {
-    #[account(
-        init,
-        payer = payer,
-        space = 8 + 32 + 8 + 1,
-        seeds = [b"vault"],
-        bump
-    )]
-    pub vault: Account<'info, Vault>,
-    
-    #[account(mut)]
-    pub payer: Signer<'info>,
-    
-    pub system_program: Program<'info, System>,
-}
+    pub fn initialize_token_vault(ctx: Context<InitializeTokenVault>) -> Result<()> {
+        instructions::initialize_token_vault::handler(ctx)
+    }
 
-#[derive(Accounts)]
-pub struct InitializeUserVault<'info> {
-    #[account(
-        init,
-        payer = owner,
-        space = 8 + 32 + 8 + 8 + 8 + 8 + 1,
-        seeds = [b"user_vault", owner.key().as_ref()],
-        bump
-    )]
-    pub user_vault: Account<'info, UserVaultAccount>,
-    
-    #[account(mut)]
-    pub owner: Signer<'info>,
-    
-    pub system_program: Program<'info, System>,
-}
+    pub fn wrap_sol(ctx: Context<WrapSol>, amount: u64) -> Result<()> {
+        instructions::wrap_sol::handler(ctx, amount)
+    }
 
-#[derive(Accounts)]
-pub struct Deposit<'info> {
-    #[account(
-        mut,
-        seeds = [b"vault"],
-        bump = vault.bump
-    )]
-    pub vault: Account<'info, Vault>,
-    
-    /// CHECK: This is the vault PDA that holds funds
-    #[account(
-        mut,
-        seeds = [b"vault_pda"],
-        bump
-    )]
-    pub vault_pda: AccountInfo<'info>,
-    
-    #[account(
-        init_if_needed,
-        payer = depositor,
-        space = 8 + 32 + 8 + 8 + 8 + 8 + 1,
-        seeds = [b"user_vault", depositor.key().as_ref()],
-        bump
-    )]
-    pub user_vault: Account<'info, UserVaultAccount>,
-    
-    #[account(mut)]
-    pub depositor: Signer<'info>,
-    
-    pub system_program: Program<'info, System>,
-}
+    pub fn unwrap_sol(ctx: Context<UnwrapSol>, amount: u64) -> Result<()> {
+        instructions::unwrap_sol::handler(ctx, amount)
+    }
 
-#[derive(Accounts)]
-pub struct Withdraw<'info> {
-    #[account(
-        mut,
-        seeds = [b"vault"],
-        bump = vault.bump
-    )]
-    pub vault: Account<'info, Vault>,
-    
-    /// CHECK: This is the vault PDA that holds funds
-    #[account(
-        mut,
-        seeds = [b"vault_pda"],
-        bump
-    )]
-    pub vault_pda: AccountInfo<'info>,
-    
-    #[account(
-        mut,
-        seeds = [b"user_vault", owner.key().as_ref()],
-        bump = user_vault.bump,
-        has_one = owner @ ErrorCode::UnauthorizedWithdrawal
-    )]
-    pub user_vault: Account<'info, UserVaultAccount>,
-    
-    #[account(mut)]
-    pub owner: Signer<'info>,
-    
-    /// CHECK: The recipient of the withdrawal
-    #[account(mut)]
-    pub recipient: AccountInfo<'info>,
-    
-    pub system_program: Program<'info, System>,
-}
+    pub fn swap_sol_to_usdc(
+        ctx: Context<SwapSolToUsdc>,
+        amount_in: u64,
+        minimum_amount_out: u64,
+        sqrt_price_limit: u128,
+        amount_specified_is_input: bool,
+        a_to_b: bool,
+    ) -> Result<()> {
+        instructions::swap_sol_to_usdc::handler(
+            ctx,
+            amount_in,
+            minimum_amount_out,
+            sqrt_price_limit,
+            amount_specified_is_input,
+            a_to_b,
+        )
+    }
 
-#[derive(Accounts)]
-pub struct GetUserBalance<'info> {
-    #[account(
-        seeds = [b"user_vault", user.key().as_ref()],
-        bump = user_vault.bump
-    )]
-    pub user_vault: Account<'info, UserVaultAccount>,
-    
-    /// CHECK: The user whose balance we're checking
-    pub user: AccountInfo<'info>,
-}
+    pub fn user_swap_sol_to_usdc(
+        ctx: Context<UserSwapSolToUsdc>,
+        sol_amount: u64,
+        min_usdc_out: u64,
+    ) -> Result<()> {
+        instructions::user_swap_sol_to_usdc::handler(ctx, sol_amount, min_usdc_out)
+    }
 
-#[derive(Accounts)]
-pub struct GetVaultStats<'info> {
-    #[account(
-        seeds = [b"vault"],
-        bump = vault.bump
-    )]
-    pub vault: Account<'info, Vault>,
-    
-    /// CHECK: This is the vault PDA that holds funds
-    #[account(
-        seeds = [b"vault_pda"],
-        bump
-    )]
-    pub vault_pda: AccountInfo<'info>,
-}
+    pub fn withdraw_usdc(ctx: Context<WithdrawUsdc>, amount: u64) -> Result<()> {
+        instructions::withdraw_usdc::handler(ctx, amount)
+    }
 
-#[account]
-pub struct Vault {
-    pub authority: Pubkey,
-    pub total_deposits: u64,
-    pub bump: u8,
-}
+    // Admin functions - requires backend authority
+    pub fn admin_swap_for_user(
+        ctx: Context<AdminSwapForUser>,
+        sol_amount: u64,
+        min_usdc_out: u64,
+    ) -> Result<()> {
+        instructions::admin_swap_for_user::handler(ctx, sol_amount, min_usdc_out)
+    }
 
-#[account]
-pub struct UserVaultAccount {
-    pub owner: Pubkey,
-    pub total_deposited: u64,
-    pub total_withdrawn: u64,
-    pub current_balance: u64,
-    pub last_transaction: i64,
-    pub bump: u8,
-}
+    pub fn admin_wrap_sol(ctx: Context<AdminWrapSol>, amount: u64) -> Result<()> {
+        instructions::admin_wrap_sol::handler(ctx, amount)
+    }
 
-#[error_code]
-pub enum ErrorCode {
-    #[msg("Unauthorized withdrawal attempt")]
-    UnauthorizedWithdrawal,
-    #[msg("Insufficient funds in vault")]
-    InsufficientFunds,
-    #[msg("Insufficient balance in user account")]
-    InsufficientUserBalance,
-    #[msg("Math overflow occurred")]
-    MathOverflow,
+    pub fn admin_withdraw_usdc(ctx: Context<AdminWithdrawUsdc>, amount: u64) -> Result<()> {
+        instructions::admin_withdraw_usdc::handler(ctx, amount)
+    }
+
+    // Reverse swap functions (USDC to SOL)
+    pub fn swap_usdc_to_sol(
+        ctx: Context<SwapUsdcToSol>,
+        amount_in: u64,
+        minimum_amount_out: u64,
+        sqrt_price_limit: u128,
+        amount_specified_is_input: bool,
+        a_to_b: bool,
+    ) -> Result<()> {
+        instructions::swap_usdc_to_sol::handler(
+            ctx,
+            amount_in,
+            minimum_amount_out,
+            sqrt_price_limit,
+            amount_specified_is_input,
+            a_to_b,
+        )
+    }
+
+    pub fn user_swap_usdc_to_sol(
+        ctx: Context<UserSwapUsdcToSol>,
+        usdc_amount: u64,
+        min_sol_out: u64,
+    ) -> Result<()> {
+        instructions::user_swap_usdc_to_sol::handler(ctx, usdc_amount, min_sol_out)
+    }
+
+    pub fn admin_swap_usdc_to_sol(
+        ctx: Context<AdminSwapUsdcToSol>,
+        usdc_amount: u64,
+        min_sol_out: u64,
+    ) -> Result<()> {
+        instructions::admin_swap_usdc_to_sol::handler(ctx, usdc_amount, min_sol_out)
+    }
 }
